@@ -25,23 +25,29 @@ const STRIDE_M = 0.67
 type MotionState = "unknown" | "granted" | "denied" | "ready"
 type ShareState = "idle" | "shared" | "copied" | "cancelled" | "failed"
 
+const INSECURE_GPS =
+  "الجوال لا يعرض طلب الموقع على رابط يبدأ بـ http. المتصفح يطلب الإذن فقط عندما تفتح الصفحة عبر https."
+
 function gpsMessage(code: number) {
+  if (code === 1 && typeof window !== "undefined" && !window.isSecureContext) return INSECURE_GPS
   if (code === 1) return "لم يُسمح بالموقع. من إعدادات المتصفح اسمح بالموقع لرِفاق ثم أعد المحاولة."
   if (code === 2) return "إشارة الموقع غير متاحة الآن. إن كنت داخل الأروقة فقد تضعف قليلاً."
   return "انتهت مهلة انتظار الموقع. سنبقي آخر نقطة ونعيد المحاولة."
 }
 
+function motionPermission(name: "DeviceOrientationEvent" | "DeviceMotionEvent") {
+  const host = (globalThis as Record<string, { requestPermission?: () => Promise<string> } | undefined>)[name]
+  const request = host?.requestPermission
+  return typeof request === "function" ? request.bind(host) : null
+}
+
 async function requestMotionPermission(): Promise<MotionState> {
-  const orientation = DeviceOrientationEvent as unknown as {
-    requestPermission?: () => Promise<string>
-  }
-  const motion = DeviceMotionEvent as unknown as {
-    requestPermission?: () => Promise<string>
-  }
+  const orientation = motionPermission("DeviceOrientationEvent")
+  const motion = motionPermission("DeviceMotionEvent")
   try {
-    if (typeof orientation.requestPermission === "function") {
-      const orientationResult = await orientation.requestPermission()
-      if (typeof motion.requestPermission === "function") await motion.requestPermission()
+    if (orientation) {
+      const orientationResult = await orientation()
+      if (motion) await motion()
       return orientationResult === "granted" ? "granted" : "denied"
     }
     return "ready"
@@ -157,53 +163,72 @@ export function useRifaq(session: Session) {
     [],
   )
 
+  const ingestPosition = useCallback(
+    (position: GeolocationPosition) => {
+      const { latitude, longitude, accuracy, heading: course, speed, altitude, altitudeAccuracy } = position.coords
+      const nowMs = Date.now()
+      engine.current.setFloor(floorRef.current)
+      engine.current.ingestGps(latitude, longitude, accuracy ?? 30, nowMs)
+      if (typeof course === "number" && course >= 0 && (speed ?? 0) > 0.6) {
+        courseRef.current = { heading: course, at: nowMs }
+        setHeading(course)
+      }
+      if (typeof speed === "number" && Number.isFinite(speed)) speedRef.current = speed
+      const fix = engine.current.snapshot(nowMs)
+      if (fix) {
+        publishFix({
+          ...fix,
+          heading: courseRef.current?.heading ?? compassRef.current,
+          speed: speedRef.current,
+          floor: floorRef.current,
+          at: nowMs,
+        })
+      }
+      setGpsError(null)
+
+      const altOk =
+        typeof altitude === "number" &&
+        Number.isFinite(altitude) &&
+        typeof altitudeAccuracy === "number" &&
+        altitudeAccuracy <= 6
+      const verticalIndex = VERTICAL.indexOf(floorRef.current)
+      if (altOk && verticalIndex >= 0) {
+        if (baseAltitude.current == null) baseAltitude.current = altitude
+        const delta = altitude - (baseAltitude.current ?? altitude)
+        if (Math.abs(delta) > 3.4) {
+          const next = delta > 0 ? VERTICAL[verticalIndex + 1] : VERTICAL[verticalIndex - 1]
+          if (next && suggestedFloor.current !== next) {
+            suggestedFloor.current = next
+            setFloorHint({ floor: next, delta })
+          }
+        }
+      }
+    },
+    [publishFix],
+  )
+
+  const requestGps = useCallback(() => {
+    if (!navigator.geolocation) {
+      setGpsError("هذا المتصفح لا يوفّر خدمة الموقع.")
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        ingestPosition(position)
+        setGpsNonce((value) => value + 1)
+      },
+      (error) => setGpsError(gpsMessage(error.code)),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    )
+  }, [ingestPosition])
+
   useEffect(() => {
     if (!navigator.geolocation) {
       setGpsError("هذا المتصفح لا يوفّر خدمة الموقع.")
       return
     }
     const watch = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude, accuracy, heading: course, speed, altitude, altitudeAccuracy } =
-          position.coords
-        const nowMs = Date.now()
-        engine.current.setFloor(floorRef.current)
-        engine.current.ingestGps(latitude, longitude, accuracy ?? 30, nowMs)
-        if (typeof course === "number" && course >= 0 && (speed ?? 0) > 0.6) {
-          courseRef.current = { heading: course, at: nowMs }
-          setHeading(course)
-        }
-        if (typeof speed === "number" && Number.isFinite(speed)) speedRef.current = speed
-        const fix = engine.current.snapshot(nowMs)
-        if (fix) {
-          publishFix({
-            ...fix,
-            heading: courseRef.current?.heading ?? compassRef.current,
-            speed: speedRef.current,
-            floor: floorRef.current,
-            at: nowMs,
-          })
-        }
-        setGpsError(null)
-
-        const altOk =
-          typeof altitude === "number" &&
-          Number.isFinite(altitude) &&
-          typeof altitudeAccuracy === "number" &&
-          altitudeAccuracy <= 6
-        const verticalIndex = VERTICAL.indexOf(floorRef.current)
-        if (altOk && verticalIndex >= 0) {
-          if (baseAltitude.current == null) baseAltitude.current = altitude
-          const delta = altitude - (baseAltitude.current ?? altitude)
-          if (Math.abs(delta) > 3.4) {
-            const next = delta > 0 ? VERTICAL[verticalIndex + 1] : VERTICAL[verticalIndex - 1]
-            if (next && suggestedFloor.current !== next) {
-              suggestedFloor.current = next
-              setFloorHint({ floor: next, delta })
-            }
-          }
-        }
-      },
+      ingestPosition,
       (error) => setGpsError(gpsMessage(error.code)),
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 },
     )
@@ -224,7 +249,7 @@ export function useRifaq(session: Session) {
       navigator.geolocation.clearWatch(watch)
       window.clearInterval(coast)
     }
-  }, [gpsNonce, publishFix])
+  }, [gpsNonce, ingestPosition])
 
   useEffect(() => {
     const onMotion = (event: DeviceMotionEvent) => {
@@ -266,10 +291,7 @@ export function useRifaq(session: Session) {
     window.addEventListener("devicemotion", onMotion)
     window.addEventListener("deviceorientationabsolute", onOrientation as EventListener)
     window.addEventListener("deviceorientation", onOrientation)
-    const needsGesture =
-      typeof (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> })
-        .requestPermission === "function"
-    setMotion(needsGesture ? "unknown" : "ready")
+    setMotion(motionPermission("DeviceOrientationEvent") ? "unknown" : "ready")
     return () => {
       window.removeEventListener("devicemotion", onMotion)
       window.removeEventListener("deviceorientationabsolute", onOrientation as EventListener)
@@ -448,7 +470,7 @@ export function useRifaq(session: Session) {
     setFloor,
     floors: FLOORS,
     gpsError,
-    retryGps: () => setGpsNonce((value) => value + 1),
+    retryGps: requestGps,
     example,
     setExample,
     now,

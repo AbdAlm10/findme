@@ -1,6 +1,7 @@
 "use client"
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
+import { bindMapGesture } from "@/components/bind-map-gesture"
 import { distanceMeters } from "@/lib/geo"
 import { formatAccuracy, formatDistance } from "@/lib/format"
 import { svgScene, toSvg } from "@/lib/haram"
@@ -73,6 +74,35 @@ type Props = {
 }
 
 type Camera = { cx: number; cy: number; w: number }
+type Point = { x: number; y: number }
+type Box = { left: number; top: number; width: number; height: number }
+
+function applyHaramGesture(start: Camera, origin: Point[], current: Point[], box: Box): Camera | null {
+  if (box.width < 1 || origin.length === 0 || origin.length !== current.length) return null
+  const metersPerPixel = (width: number) => width / box.width
+  if (origin.length === 1) {
+    const scale = metersPerPixel(start.w)
+    return {
+      cx: start.cx - (current[0].x - origin[0].x) * scale,
+      cy: start.cy - (current[0].y - origin[0].y) * scale,
+      w: start.w,
+    }
+  }
+  const dist0 = Math.hypot(origin[1].x - origin[0].x, origin[1].y - origin[0].y) || 1
+  const dist1 = Math.hypot(current[1].x - current[0].x, current[1].y - current[0].y) || 1
+  const w = Math.min(4200, Math.max(90, start.w / (dist1 / dist0)))
+  const mid0 = { x: (origin[0].x + origin[1].x) / 2, y: (origin[0].y + origin[1].y) / 2 }
+  const mid1 = { x: (current[0].x + current[1].x) / 2, y: (current[0].y + current[1].y) / 2 }
+  const startScale = metersPerPixel(start.w)
+  const worldX = start.cx + (mid0.x - box.left - box.width / 2) * startScale
+  const worldY = start.cy + (mid0.y - box.top - box.height / 2) * startScale
+  const nextScale = metersPerPixel(w)
+  return {
+    cx: worldX - (mid1.x - box.left - box.width / 2) * nextScale,
+    cy: worldY - (mid1.y - box.top - box.height / 2) * nextScale,
+    w,
+  }
+}
 
 export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
   { members, selfId, floor, now, onSelect, onUserMove },
@@ -88,8 +118,13 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
   const [cam, setCam] = useState<Camera>(() =>
     frameFor({ w: 390, h: 700, aspect: 0.72, insets: ZERO_INSETS }),
   )
-  const drag = useRef<{ id: number; x: number; y: number; cx: number; cy: number } | null>(null)
+  const camRef = useRef(cam)
+  const gestureCam = useRef<Camera | null>(null)
+  const gesturing = useRef(false)
+  const onUserMoveRef = useRef(onUserMove)
   const fitted = useRef(true)
+  camRef.current = cam
+  onUserMoveRef.current = onUserMove
   const viewRef = useRef(view)
   viewRef.current = view
 
@@ -132,6 +167,7 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       setCam((current) => ({ ...current, cx: point.x, cy: point.y, w: Math.min(current.w, 320) }))
     },
     panTo(lat, lng) {
+      if (gesturing.current) return
       const point = toSvg(lat, lng)
       setCam((current) => ({ ...current, cx: point.x, cy: point.y }))
     },
@@ -161,7 +197,28 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       setCam((current) => ({ ...current, w: Math.min(4200, Math.max(90, current.w * factor)) }))
     }
     svg.addEventListener("wheel", onWheel, { passive: false })
-    return () => svg.removeEventListener("wheel", onWheel)
+    const unbind = bindMapGesture(svg, {
+      shouldIgnore: (target) => target instanceof Element && Boolean(target.closest(".svg-hit")),
+      onStart() {
+        fitted.current = false
+        gestureCam.current = camRef.current
+        gesturing.current = true
+        onUserMoveRef.current()
+      },
+      onMove(origin, current, rect) {
+        const start = gestureCam.current
+        if (!start) return
+        const next = applyHaramGesture(start, origin, current, rect)
+        if (next) setCam(next)
+      },
+      onEnd() {
+        gesturing.current = false
+      },
+    })
+    return () => {
+      svg.removeEventListener("wheel", onWheel)
+      unbind()
+    }
   }, [])
 
   const viewH = cam.w * Math.max(view.aspect, 0.25)
@@ -176,26 +233,6 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       viewBox={`${cam.cx - cam.w / 2} ${cam.cy - viewH / 2} ${cam.w} ${viewH}`}
       role="application"
       aria-label="خريطة المسجد الحرام"
-      onPointerDown={(event) => {
-        fitted.current = false
-        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, cx: cam.cx, cy: cam.cy }
-        event.currentTarget.setPointerCapture(event.pointerId)
-        onUserMove()
-      }}
-      onPointerMove={(event) => {
-        const start = drag.current
-        const box = event.currentTarget.getBoundingClientRect()
-        if (!start || start.id !== event.pointerId || box.width === 0) return
-        const metersPerPixel = cam.w / box.width
-        setCam((current) => ({
-          ...current,
-          cx: start.cx - (event.clientX - start.x) * metersPerPixel,
-          cy: start.cy - (event.clientY - start.y) * metersPerPixel,
-        }))
-      }}
-      onPointerUp={() => {
-        drag.current = null
-      }}
     >
       <rect x={cam.cx - cam.w} y={cam.cy - viewH} width={cam.w * 3} height={viewH * 3} className="svg-bg" />
       {scene.paths.map((path, index) => (
@@ -256,15 +293,16 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
             }}
           >
             <circle r={Math.min(member.location.accuracy, 250)} fill={member.color} opacity={stale ? 0.08 : 0.16} />
-            <circle r={label * 0.28} fill={member.color} stroke="#f4efe6" strokeWidth={label * 0.06} />
+            <circle className="svg-hit" r={label * 0.28} fill={member.color} stroke="#f4efe6" strokeWidth={label * 0.06} />
             {member.location.heading != null ? (
               <polygon
                 points={`0,${-label * 0.72} ${label * 0.16},${-label * 0.28} ${-label * 0.16},${-label * 0.28}`}
+                className="svg-hit"
                 fill={member.color}
                 transform={`rotate(${member.location.heading})`}
               />
             ) : null}
-            <text y={label * 0.85} fontSize={label * 0.38} textAnchor="middle" className="svg-text">
+            <text y={label * 0.85} fontSize={label * 0.38} textAnchor="middle" className="svg-text svg-hit">
               {member.name}
             </text>
             <text y={label * 1.28} fontSize={label * 0.3} textAnchor="middle" className="svg-sub">

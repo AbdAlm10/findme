@@ -1,12 +1,14 @@
 "use client"
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
+import { bindMapGesture, isPinTarget } from "@/components/bind-map-gesture"
 import type { MapHandle } from "@/components/haram-map"
 import { destination, distanceMeters, KAABA_LAT, KAABA_LNG } from "@/lib/geo"
 import { formatAccuracy, formatDistance } from "@/lib/format"
+import { applyWorldGesture, project, WORLD_CAMERA, type WorldCamera } from "@/lib/world-camera"
 import type { PublicMember } from "@/lib/types"
 
-type Camera = { lat: number; lng: number; zoom: number }
+type Camera = WorldCamera
 
 type Props = {
   members: PublicMember[]
@@ -16,27 +18,7 @@ type Props = {
   onUserMove: () => void
 }
 
-const WORLD: Camera = { lat: 18, lng: 20, zoom: 2 }
-
-function worldSize(zoom: number) {
-  return 256 * 2 ** zoom
-}
-
-function project(lat: number, lng: number, zoom: number) {
-  const size = worldSize(zoom)
-  const x = ((lng + 180) / 360) * size
-  const sine = Math.min(Math.max(Math.sin((lat * Math.PI) / 180), -0.9999), 0.9999)
-  const y = (0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI)) * size
-  return { x, y }
-}
-
-function unproject(x: number, y: number, zoom: number) {
-  const size = worldSize(zoom)
-  const lng = (x / size) * 360 - 180
-  const n = Math.PI - (2 * Math.PI * y) / size
-  const lat = (180 / Math.PI) * Math.atan(Math.sinh(n))
-  return { lat: Math.min(80, Math.max(-80, lat)), lng }
-}
+const WORLD = WORLD_CAMERA
 
 export const WorldMap = forwardRef<MapHandle, Props>(function WorldMap(
   { members, selfId, now, onSelect, onUserMove },
@@ -45,9 +27,12 @@ export const WorldMap = forwardRef<MapHandle, Props>(function WorldMap(
   const rootRef = useRef<HTMLDivElement>(null)
   const [cam, setCam] = useState<Camera>(WORLD)
   const [size, setSize] = useState({ w: 800, h: 600 })
-  const drag = useRef<{ id: number; x: number; y: number; lat: number; lng: number } | null>(null)
   const camRef = useRef(cam)
+  const gestureCam = useRef<Camera | null>(null)
+  const gesturing = useRef(false)
+  const onUserMoveRef = useRef(onUserMove)
   camRef.current = cam
+  onUserMoveRef.current = onUserMove
 
   useEffect(() => {
     const root = rootRef.current
@@ -73,14 +58,36 @@ export const WorldMap = forwardRef<MapHandle, Props>(function WorldMap(
       }))
     }
     root.addEventListener("wheel", onWheel, { passive: false })
-    return () => root.removeEventListener("wheel", onWheel)
+    const unbind = bindMapGesture(root, {
+      shouldIgnore: isPinTarget,
+      onStart() {
+        gestureCam.current = camRef.current
+        gesturing.current = true
+        onUserMoveRef.current()
+      },
+      onMove(origin, current, rect) {
+        const start = gestureCam.current
+        if (!start) return
+        const next = applyWorldGesture(start, origin, current, rect)
+        if (next) setCam(next)
+      },
+      onEnd() {
+        gesturing.current = false
+      },
+    })
+    return () => {
+      root.removeEventListener("wheel", onWheel)
+      unbind()
+    }
   }, [])
 
   useImperativeHandle(ref, () => ({
     focus(lat, lng) {
+      if (gesturing.current) return
       setCam((current) => ({ lat, lng, zoom: Math.max(current.zoom, 15) }))
     },
     panTo(lat, lng) {
+      if (gesturing.current) return
       setCam((current) => ({ ...current, lat, lng }))
     },
     fitHaram() {
@@ -123,26 +130,6 @@ export const WorldMap = forwardRef<MapHandle, Props>(function WorldMap(
       className="rf-canvas rf-world"
       role="application"
       aria-label="خريطة العالم"
-      onPointerDown={(event) => {
-        if ((event.target as HTMLElement).closest(".pin")) return
-        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, lat: cam.lat, lng: cam.lng }
-        event.currentTarget.setPointerCapture(event.pointerId)
-        onUserMove()
-      }}
-      onPointerMove={(event) => {
-        const start = drag.current
-        if (!start || start.id !== event.pointerId) return
-        const origin = project(start.lat, start.lng, camRef.current.zoom)
-        const next = unproject(
-          origin.x - (event.clientX - start.x),
-          origin.y - (event.clientY - start.y),
-          camRef.current.zoom,
-        )
-        setCam((current) => ({ ...current, lat: next.lat, lng: next.lng }))
-      }}
-      onPointerUp={() => {
-        drag.current = null
-      }}
     >
       {tileNodes.map((tile) => (
         // Map tiles are remote rasters; the image optimizer would proxy every tile.
