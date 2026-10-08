@@ -2,16 +2,16 @@ import type { MetadataRoute } from "next"
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "رِفاق — موقع الأهل في الحرم",
+    name: "رِفاق — أين من معك",
     short_name: "رِفاق",
-    description: "موقع المجموعة داخل المسجد الحرام، مع خريطة تعمل دون اتصال وهامش خطأ ظاهر.",
+    description: "خريطة العالم لمجموعتك، وسهم المسافة، ومخطط الحرم عند الحاجة.",
     start_url: "/",
     scope: "/",
     display: "standalone",
     dir: "rtl",
     lang: "ar",
-    background_color: "#0c1612",
-    theme_color: "#0c1612",
+    background_color: "#f5f5f7",
+    theme_color: "#f5f5f7",
     orientation: "portrait",
     icons: [
       { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },

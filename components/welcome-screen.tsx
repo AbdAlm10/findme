@@ -71,11 +71,11 @@ export function WelcomeScreen() {
   return (
     <main className="rf-welcome">
       <section className="rf-hero">
-        <p className="rf-kicker">المسجد الحرام</p>
+        <p className="rf-kicker">أين من معك</p>
         <h1 className="rf-wordmark">رِفاق</h1>
         <p className="rf-lede">
-          اعرف أين من معك داخل الحرم. يبدأ التطبيق بالإنترنت وGPS، وإذا انقطع الاتصال تبقى خريطة المسجد
-          ويكمل موقعك من إشارة الهاتف. الدقة المعتادة بين ٥ و١٠ أمتار، ودائرة الخطأ ظاهرة دائماً.
+          خريطة للعالم، وسهم يوجّهك نحو من تبحث عنه مع المسافة. إذا كنتم في المسجد الحرام يمكنكم التبديل إلى
+          مخطط الحرم. الدقة المعتادة بين ٥ و١٠ أمتار، وهامش الخطأ ظاهر دائماً.
         </p>
         <OrbitSketch />
       </section>
@@ -148,7 +148,7 @@ export function WelcomeScreen() {
           <button type="button" onClick={() => setInstallOpen(true)}>
             تثبيت النسخة على الآيفون أو أندرويد
           </button>
-          <p>الإنترنت أولاً لتبادل المواقع. الخريطة محفوظة في الجهاز، وهامش الخطأ لا يُخفى.</p>
+          <p>الإنترنت لتبادل المواقع وخريطة العالم. مخطط الحرم محفوظ في الجهاز، وهامش الخطأ لا يُخفى.</p>
         </footer>
       </section>
       <InstallDialog open={installOpen} onOpenChange={setInstallOpen} />

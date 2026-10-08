@@ -19,13 +19,13 @@ const amiri = Amiri({
 })
 
 export const metadata: Metadata = {
-  title: "رِفاق — موقع الأهل في الحرم",
+  title: "رِفاق — أين من معك",
   description:
-    "تتبع مجموعة صغيرة داخل المسجد الحرام على خريطة محفوظة. إنترنت أولاً، ثم GPS والخطوات إذا انقطع الاتصال، مع إظهار هامش الخطأ.",
+    "خريطة للعالم لمجموعة صغيرة، مع سهم ومسافة مثل البحث عن جهاز، ووضع خاص لمخطط المسجد الحرام. هامش الخطأ ظاهر دائماً.",
   applicationName: "رِفاق",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    statusBarStyle: "default",
     title: "رِفاق",
   },
   other: {
@@ -35,7 +35,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: "#0c1612",
+  themeColor: "#f5f5f7",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

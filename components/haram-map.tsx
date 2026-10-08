@@ -9,6 +9,7 @@ export type MapHandle = {
   focus: (lat: number, lng: number) => void
   panTo: (lat: number, lng: number) => void
   fitHaram: () => void
+  fitWorld: () => void
   north: () => void
   zoomIn: () => void
   zoomOut: () => void
@@ -34,6 +35,9 @@ export const HaramMap = forwardRef<MapHandle, Props>(function HaramMap(props, re
       svgRef.current?.panTo(lat, lng)
     },
     fitHaram() {
+      svgRef.current?.fitHaram()
+    },
+    fitWorld() {
       svgRef.current?.fitHaram()
     },
     north() {

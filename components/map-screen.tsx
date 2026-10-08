@@ -2,8 +2,10 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useRef, useState, type ReactNode } from "react"
+import { FindView } from "@/components/find-view"
 import { HaramMap, type MapHandle } from "@/components/haram-map"
 import { InstallDialog } from "@/components/install-dialog"
+import { WorldMap } from "@/components/world-map"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -46,13 +48,27 @@ export function MapScreen() {
 
 function LiveMap({ session }: { session: Session }) {
   const mapRef = useRef<MapHandle>(null)
+  const exampleFocused = useRef(false)
   const rifaq = useRifaq(session)
   const [follow, setFollow] = useState(true)
   const [armed, setArmed] = useState(false)
+  const [mode, setMode] = useState<"world" | "haram">("world")
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [finderId, setFinderId] = useState<string | null>(null)
   const [installOpen, setInstallOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const selected = rifaq.members.find((member) => member.id === selectedId) ?? null
+  const finder = rifaq.members.find((member) => member.id === finderId) ?? null
+
+  function selectMember(id: string) {
+    if (id === session.memberId) {
+      setFinderId(null)
+      setSelectedId(id)
+      return
+    }
+    setSelectedId(null)
+    setFinderId(id)
+  }
 
   useEffect(() => {
     if ((rifaq.kaabaDistance ?? Infinity) < 1800) setArmed(true)
@@ -61,9 +77,21 @@ function LiveMap({ session }: { session: Session }) {
   useEffect(() => {
     const location = rifaq.self.location
     if (!follow || !location) return
-    if (!armed && !rifaq.example) return
+    if (mode === "haram" && !armed && !rifaq.example) return
     mapRef.current?.panTo(location.lat, location.lng)
-  }, [armed, follow, rifaq.example, rifaq.self.location])
+  }, [armed, follow, mode, rifaq.example, rifaq.self.location])
+
+  useEffect(() => {
+    if (!rifaq.example) {
+      exampleFocused.current = false
+      return
+    }
+    if (mode !== "world" || exampleFocused.current) return
+    const location = rifaq.self.location
+    if (!location) return
+    exampleFocused.current = true
+    mapRef.current?.focus(location.lat, location.lng)
+  }, [mode, rifaq.example, rifaq.self.location])
 
   const shareNote =
     rifaq.shareState === "copied"
@@ -76,15 +104,26 @@ function LiveMap({ session }: { session: Session }) {
 
   return (
     <main className="rf-map">
-      <HaramMap
-        ref={mapRef}
-        members={rifaq.members}
-        selfId={session.memberId}
-        floor={rifaq.floor}
-        now={rifaq.now}
-        onSelect={setSelectedId}
-        onUserMove={() => setFollow(false)}
-      />
+      {mode === "world" ? (
+        <WorldMap
+          ref={mapRef}
+          members={rifaq.members}
+          selfId={session.memberId}
+          now={rifaq.now}
+          onSelect={selectMember}
+          onUserMove={() => setFollow(false)}
+        />
+      ) : (
+        <HaramMap
+          ref={mapRef}
+          members={rifaq.members}
+          selfId={session.memberId}
+          floor={rifaq.floor}
+          now={rifaq.now}
+          onSelect={selectMember}
+          onUserMove={() => setFollow(false)}
+        />
+      )}
 
       <div className="rf-top">
         <div className="rf-glass rf-status">
@@ -98,20 +137,40 @@ function LiveMap({ session }: { session: Session }) {
               </span>
             ) : null}
           </div>
-          <div className="rf-floors" role="tablist" aria-label="الدور">
-            {rifaq.floors.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={rifaq.floor === item.id}
-                className={rifaq.floor === item.id ? "is-on" : ""}
-                onClick={() => rifaq.setFloor(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
+          <div className="rf-modes" role="tablist" aria-label="نطاق الخريطة">
+            <button type="button" role="tab" aria-selected={mode === "world"} className={mode === "world" ? "is-on" : ""} onClick={() => setMode("world")}>
+              العالم
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "haram"}
+              className={mode === "haram" ? "is-on" : ""}
+              onClick={() => {
+                setMode("haram")
+                setFollow(false)
+                window.setTimeout(() => mapRef.current?.fitHaram(), 0)
+              }}
+            >
+              الحرم
+            </button>
           </div>
+          {mode === "haram" ? (
+            <div className="rf-floors" role="tablist" aria-label="الدور">
+              {rifaq.floors.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={rifaq.floor === item.id}
+                  className={rifaq.floor === item.id ? "is-on" : ""}
+                  onClick={() => rifaq.setFloor(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         {rifaq.floorHint ? (
           <div className="rf-glass rf-hint">
@@ -130,7 +189,7 @@ function LiveMap({ session }: { session: Session }) {
         ) : null}
         {rifaq.notice ? <p className="rf-glass rf-notice">{rifaq.notice}</p> : null}
         {rifaq.example ? (
-          <p className="rf-glass rf-notice">مشهد تجريبي داخل الحرم. النقاط المتحركة ليست أشخاصاً حقيقيين.</p>
+          <p className="rf-glass rf-notice">مشهد تجريبي. النقاط المتحركة ليست أشخاصاً حقيقيين.</p>
         ) : null}
         {rifaq.kaabaDistance != null && rifaq.kaabaDistance > 400 && !rifaq.self.example ? (
           <p className="rf-glass rf-notice">
@@ -154,13 +213,14 @@ function LiveMap({ session }: { session: Session }) {
           <LocateIcon />
         </ToolButton>
         <ToolButton
-          label="الكعبة"
+          label={mode === "haram" ? "الكعبة" : "العالم"}
           onClick={() => {
             setFollow(false)
-            mapRef.current?.fitHaram()
+            if (mode === "haram") mapRef.current?.fitHaram()
+            else mapRef.current?.fitWorld()
           }}
         >
-          <KaabaIcon />
+          {mode === "haram" ? <KaabaIcon /> : <WorldIcon />}
         </ToolButton>
         <ToolButton label="شمال" onClick={() => mapRef.current?.north()}>
           <NorthIcon />
@@ -211,7 +271,7 @@ function LiveMap({ session }: { session: Session }) {
               self={rifaq.self}
               now={rifaq.clock()}
               activeFloor={rifaq.floor}
-              onSelect={() => setSelectedId(member.id)}
+              onSelect={() => selectMember(member.id)}
             />
           ))}
         </ul>
@@ -234,8 +294,19 @@ function LiveMap({ session }: { session: Session }) {
             مغادرة
           </button>
         </div>
-        <p className="rf-credit">خريطة الحرم © مساهمو OpenStreetMap</p>
+        <p className="rf-credit">
+          {mode === "haram" ? "خريطة الحرم © مساهمو OpenStreetMap" : "خريطة العالم، ووضع الحرم عند الحاجة"}
+        </p>
       </section>
+
+      {finder ? (
+        <FindView
+          member={finder}
+          self={rifaq.self}
+          onClose={() => setFinderId(null)}
+          onEnableMotion={() => void rifaq.enableMotion()}
+        />
+      ) : null}
 
       <PersonDialog
         member={selected}
@@ -448,6 +519,15 @@ function KaabaIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="7" y="5" width="10" height="14" transform="rotate(45 12 12)" />
+    </svg>
+  )
+}
+
+function WorldIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M4 12h16M12 4c2.5 2.4 2.5 13.6 0 16M12 4c-2.5 2.4-2.5 13.6 0 16" />
     </svg>
   )
 }

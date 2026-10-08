@@ -139,6 +139,10 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       fitted.current = true
       setCam(frameFor(viewRef.current))
     },
+    fitWorld() {
+      fitted.current = true
+      setCam(frameFor(viewRef.current))
+    },
     north() {},
     zoomIn() {
       setCam((current) => ({ ...current, w: Math.max(90, current.w / 1.3) }))
