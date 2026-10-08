@@ -9,6 +9,60 @@ import type { MapHandle } from "@/components/haram-map"
 
 const scene = svgScene()
 
+type Insets = { top: number; right: number; bottom: number; left: number }
+type Viewport = { w: number; h: number; aspect: number; insets: Insets }
+
+const ZERO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 }
+
+/** Fit the mosque into the part of the map that panels do not cover. */
+function frameFor(view: Viewport): Camera {
+  const { minX, minY, width, height } = scene.bounds
+  const cx0 = minX + width / 2
+  const cy0 = minY + height / 2
+  const pxW = Math.max(view.w, 1)
+  const pxH = Math.max(view.h, 1)
+  const visW = Math.max(48, pxW - view.insets.left - view.insets.right)
+  const visH = Math.max(48, pxH - view.insets.top - view.insets.bottom)
+  const worldVisW = Math.max(width, height / Math.max(visH / visW, 0.2)) * 1.12
+  const w = worldVisW * (pxW / visW)
+  const viewH = w * Math.max(view.aspect, 0.25)
+  const visCenterX = (view.insets.left + visW / 2) / pxW
+  const visCenterY = (view.insets.top + visH / 2) / pxH
+  return {
+    cx: cx0 + w * (0.5 - visCenterX),
+    cy: cy0 + viewH * (0.5 - visCenterY),
+    w,
+  }
+}
+
+function readViewport(svg: SVGSVGElement): Viewport {
+  const box = svg.getBoundingClientRect()
+  const aspect = box.width > 0 ? box.height / box.width : 0.72
+  const insets = { ...ZERO_INSETS }
+  const root = svg.parentElement
+  if (root && box.width > 0 && box.height > 0) {
+    for (const el of root.querySelectorAll<HTMLElement>(".rf-roster, .rf-top")) {
+      const rect = el.getBoundingClientRect()
+      const overlapW = Math.min(rect.right, box.right) - Math.max(rect.left, box.left)
+      const overlapH = Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top)
+      if (overlapW < 24 || overlapH < 24) continue
+      const fromLeft = Math.max(0, rect.left - box.left)
+      const fromRight = Math.max(0, box.right - rect.right)
+      const fromTop = Math.max(0, rect.top - box.top)
+      const fromBottom = Math.max(0, box.bottom - rect.bottom)
+      if (overlapH > box.height * 0.45 && overlapW < box.width * 0.55) {
+        if (fromLeft <= fromRight) insets.left = Math.max(insets.left, overlapW + 8)
+        else insets.right = Math.max(insets.right, overlapW + 8)
+      } else if (fromTop <= fromBottom) {
+        insets.top = Math.max(insets.top, overlapH + 8)
+      } else {
+        insets.bottom = Math.max(insets.bottom, overlapH + 8)
+      }
+    }
+  }
+  return { w: box.width || 390, h: box.height || 700, aspect, insets }
+}
+
 type Props = {
   members: PublicMember[]
   selfId: string
@@ -25,26 +79,52 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null)
-  const [cam, setCam] = useState<Camera>({
-    cx: scene.bounds.minX + scene.bounds.width / 2,
-    cy: scene.bounds.minY + scene.bounds.height / 2,
-    w: scene.bounds.width,
+  const [view, setView] = useState<Viewport>({
+    w: 390,
+    h: 700,
+    aspect: 0.72,
+    insets: ZERO_INSETS,
   })
+  const [cam, setCam] = useState<Camera>(() =>
+    frameFor({ w: 390, h: 700, aspect: 0.72, insets: ZERO_INSETS }),
+  )
   const drag = useRef<{ id: number; x: number; y: number; cx: number; cy: number } | null>(null)
-  const [aspect, setAspect] = useState(1.35)
+  const fitted = useRef(true)
+  const viewRef = useRef(view)
+  viewRef.current = view
 
   useEffect(() => {
     const svg = svgRef.current
     if (!svg) return
     const update = () => {
-      const box = svg.getBoundingClientRect()
-      if (box.width > 0) setAspect(box.height / box.width)
+      const next = readViewport(svg)
+      setView((current) => {
+        const same =
+          Math.abs(current.w - next.w) < 1 &&
+          Math.abs(current.h - next.h) < 1 &&
+          Math.abs(current.aspect - next.aspect) < 0.01 &&
+          Math.abs(current.insets.top - next.insets.top) < 2 &&
+          Math.abs(current.insets.right - next.insets.right) < 2 &&
+          Math.abs(current.insets.bottom - next.insets.bottom) < 2 &&
+          Math.abs(current.insets.left - next.insets.left) < 2
+        return same ? current : next
+      })
     }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(svg)
+    const root = svg.parentElement
+    if (root) {
+      observer.observe(root)
+      for (const el of root.querySelectorAll(".rf-roster, .rf-top")) observer.observe(el)
+    }
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    if (!fitted.current) return
+    setCam(frameFor(view))
+  }, [view])
 
   useImperativeHandle(ref, () => ({
     focus(lat, lng) {
@@ -56,11 +136,8 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       setCam((current) => ({ ...current, cx: point.x, cy: point.y }))
     },
     fitHaram() {
-      setCam({
-        cx: scene.bounds.minX + scene.bounds.width / 2,
-        cy: scene.bounds.minY + scene.bounds.height / 2,
-        w: scene.bounds.width,
-      })
+      fitted.current = true
+      setCam(frameFor(viewRef.current))
     },
     north() {},
     zoomIn() {
@@ -83,7 +160,7 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
     return () => svg.removeEventListener("wheel", onWheel)
   }, [])
 
-  const viewH = cam.w * aspect
+  const viewH = cam.w * Math.max(view.aspect, 0.25)
   const label = Math.max(8, cam.w / 38)
   const showGates = cam.w < 820
   const self = members.find((member) => member.id === selfId)?.location
@@ -96,6 +173,7 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
       role="application"
       aria-label="خريطة المسجد الحرام"
       onPointerDown={(event) => {
+        fitted.current = false
         drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, cx: cam.cx, cy: cam.cy }
         event.currentTarget.setPointerCapture(event.pointerId)
         onUserMove()
@@ -122,6 +200,7 @@ export const SvgMap = forwardRef<MapHandle, Props>(function SvgMap(
           d={path.d}
           className={`svg-${path.kind}${floor === "sai" && path.kind === "sai" ? " is-hot" : ""}${floor === "ground" && path.kind === "tawaf" ? " is-hot" : ""}`}
           fillRule="evenodd"
+          vectorEffect={path.kind === "sai" ? undefined : "non-scaling-stroke"}
         />
       ))}
       {showGates

@@ -1,8 +1,8 @@
 "use client"
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react"
-import { GlMap } from "@/components/gl-map"
+import { forwardRef, useImperativeHandle, useRef } from "react"
 import { SvgMap } from "@/components/svg-map"
+import { KAABA_LAT, KAABA_LNG } from "@/lib/geo"
 import type { FloorId, PublicMember } from "@/lib/types"
 
 export type MapHandle = {
@@ -23,52 +23,29 @@ type Props = {
   onUserMove: () => void
 }
 
-function hasWebGL() {
-  try {
-    const canvas = document.createElement("canvas")
-    return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl"))
-  } catch {
-    return false
-  }
-}
-
 export const HaramMap = forwardRef<MapHandle, Props>(function HaramMap(props, ref) {
-  const [engine, setEngine] = useState<"pending" | "gl" | "svg">("pending")
-  const glRef = useRef<MapHandle>(null)
   const svgRef = useRef<MapHandle>(null)
-
-  useEffect(() => {
-    setEngine(hasWebGL() ? "gl" : "svg")
-  }, [])
 
   useImperativeHandle(ref, () => ({
     focus(lat, lng) {
-      ;(engine === "svg" ? svgRef : glRef).current?.focus(lat, lng)
+      svgRef.current?.focus(lat, lng)
     },
     panTo(lat, lng) {
-      ;(engine === "svg" ? svgRef : glRef).current?.panTo(lat, lng)
+      svgRef.current?.panTo(lat, lng)
     },
     fitHaram() {
-      ;(engine === "svg" ? svgRef : glRef).current?.fitHaram()
+      svgRef.current?.fitHaram()
     },
     north() {
-      ;(engine === "svg" ? svgRef : glRef).current?.north()
+      svgRef.current?.focus(KAABA_LAT, KAABA_LNG)
     },
     zoomIn() {
-      ;(engine === "svg" ? svgRef : glRef).current?.zoomIn()
+      svgRef.current?.zoomIn()
     },
     zoomOut() {
-      ;(engine === "svg" ? svgRef : glRef).current?.zoomOut()
+      svgRef.current?.zoomOut()
     },
   }))
 
-  if (engine === "pending") {
-    return <div className="rf-canvas rf-boot">نجهّز خريطة الحرم…</div>
-  }
-
-  if (engine === "svg") {
-    return <SvgMap ref={svgRef} {...props} />
-  }
-
-  return <GlMap ref={glRef} {...props} onFail={() => setEngine("svg")} />
+  return <SvgMap ref={svgRef} {...props} />
 })

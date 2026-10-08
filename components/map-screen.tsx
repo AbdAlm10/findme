@@ -234,7 +234,7 @@ function LiveMap({ session }: { session: Session }) {
             مغادرة
           </button>
         </div>
-        <p className="rf-credit">خريطة الحرم © مساهمو OpenStreetMap · الشوارع © CARTO</p>
+        <p className="rf-credit">خريطة الحرم © مساهمو OpenStreetMap</p>
       </section>
 
       <PersonDialog
